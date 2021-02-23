@@ -1,0 +1,653 @@
+---
+title: "Oxford University Summer School"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+---
+
+
+```{r, echo=F}
+options(scipen=999)
+```
+
+```{r, echo=FALSE}
+htmltools::img(src = "DeptOfEducation-Logo-Lockup-RGB-EmailSignature.png",style = 'position:absolute; height: 150px; top:0; right:0; padding:10px;')
+```
+
+<br><br><br><br><br><br><br>
+      
+# Multilevel Modelling
+
+## Theoretical Overview
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/pfuoD1ImtNw" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+## Practical  
+
+In this practical session we will analyse some data that has a clustered or multi-level structure. In this example, researchers are interested in whether undergraduates students' grades predict their salary after graduation. The data is clustered within majors (e.g. engineering, english, etc.). Download the data [here](https://osf.io/zjqh9/download)
+
+## Loading the packages 
+
+First we will need to install the two packages we will use to run MLM in R.
+
+```{r, eval=FALSE, message = FALSE, warning= FALSE}
+install.packages("lme4")
+install.packages("lmerTest")
+```
+
+We now load these packages into the working environment
+
+```{r, message = FALSE, warning= FALSE}
+library(lme4)
+library(lmerTest)
+```
+
+
+**lme4** stands for linear mixed-effects models (another name for MLM). It is the most common package used for running MLM in R. The main functions are `lmer` for running models with continuous outcome variables and `glmer` for logistic models with binary outcome variables (covered later in this course).       
+
+Because the **lme4** packaged is based on Bayesian algorithms and due to the perspective of the package developers **lme4** doesn't produce p-values (there are also some disagreements as to how they should be computed for MLM). It is therefore common for researchers more accustomed to working with p-values to use the **lmerTest** package. **lmerTest** doesn't have any functions that we will use but, when loaded, it overrides the standard output of **lme4** in order to provide p-values.
+
+## Exploring the data
+
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/1NCt3JZoptg" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+We can load the [graduate-data.csv](https://osf.io/zjqh9/download) dataset and explore it.
+
+```{r, eval=FALSE}
+mydata <- read.csv("graduate-data-student.csv")
+summarytools::dfSummary(mydata)
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+mydata <- read.csv("graduate-data.csv")
+Variables <- names(mydata[,1:5])
+Descriptions <- c("Unique ID number for each student",
+                  "The students major",
+                  "The major's entry mark",
+                   "The student's final grade",
+       "The student's income the year after graduating")
+
+knitr::kable(cbind(Variables,Descriptions), caption = "Graduate Income Dataset")
+
+
+
+```
+
+
+
+
+```{r, echo= FALSE, message=F, warning=F}
+library(summarytools)
+st_options(bootstrap.css     = FALSE,       # Already part of the theme so no need for it
+           plain.ascii       = FALSE,       # One of the essential settings
+           style             = "rmarkdown", # Idem.
+           dfSummary.silent  = TRUE,        # Suppresses messages about temporary files
+           footnote          = NA,          # Keeping the results minimalistic
+           subtitle.emphasis = FALSE)       # For the vignette theme, this gives better results.
+
+print(dfSummary(mydata[,1:5], graph.magnif = 0.75), method = 'render')
+
+
+```
+
+
+If we examine the dataset for a moment, we can see that the students are drawn from 5 different majors and that exactly 20% of the sample is drawn from each major. Perhaps this is because the researchers deliberately sampled the same number of students from each major. While this isn't important from an analytical point of view, it is good practice to get used to exploring your data to see if there are any issues. Furthermore, we can see that the final grades students received are all rounded to the nearest 10%. This might be because the university records their grades in this way. Again, this is unimportant for the analysis, but get used to making sure that the data 'looks right' before jumping into the analysis.
+
+## Analysing the data
+
+The main research question concerns whether grades predicts income and we are also curious about the effect of students' majors on this relationship. Let's make a scatter plot before we evaluate this further by plotting income as a function of grade and colour coding based on major.
+
+```{r, echo=T}
+
+
+library(ggplot2)
+
+ggplot(data=mydata, aes(x=grade, y=salary, group = major, colour = major)) +
+  geom_point(aes(x=grade, y = salary, color = major),shape = 16, size = 5, show.legend = FALSE, alpha = 0.4) +
+  theme_classic() +
+  labs(x="Final Grade", y="Predicted Salary") +
+  ggtitle("") + 
+  scale_colour_discrete('Department')  + theme(legend.position = "none")+
+  scale_y_continuous(breaks = seq(35000, 90000,5000), labels = paste("$", seq(35, 90,5), "k", sep = "")) +
+  scale_x_continuous(breaks = seq(0,100,10)) 
+
+
+
+```
+
+
+Don't worry too much about the details of the scatter plot code, most of it just makes it look pretty. Importantly though we can make several observations from the scatter plot itself. First their appears to be an overall positive relationship between students' final grade and their starting income. Secondly, it looks like the relationship might differ as a function of major.
+
+## Simple Regression
+
+The first model we can run is a simple regression model that does not account for the fact that students are clustered within majors, but will give us an overall sense of the relationship. You should note that if students' majors have an important effect on the relationship between grade and salary, then our model might be incorrect because we will be aggregating across the majors (and the standard errors will be too small).
+
+
+The simple regression model is:
+
+$$
+salary_{i,j} = \beta_0 + \beta_1*grade_{i,j} + r_{i,j}
+$$
+
+Let's run the model in R.
+
+```{r}
+regmodel <- lm(salary ~ grade, mydata)
+summary(regmodel)
+```
+
+
+We can see that the grand mean $\beta_0$ is equal to $`r round(summary(lm(salary ~ grade, mydata))$coefficients[1])` and student earn an 'additional' $`r round(summary(lm(salary ~ grade, mydata))$coefficients[2])` for each grade higher they score. Note, that the standard error in this model is going to be incorrect and we can't tell how much of the variance in salary is at the major vs student level.
+
+
+## Variance Components 
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/1F41Vof7wM8" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+To determine whether students' major is a factor that might be affecting our results (and whether doing a MLM is important), we perform a variance decomposition. To decompose the variance into major and student level effects we need to calculate the **null model**. The null model can be expressed as:
+
+$$
+salary_{i,j} = \beta_0 + \mu_{0,j} + e_{i,j}
+$$
+Here $salary_{i,j}$ is the salary for student $i$ in major $j$. $\beta_0$ is the grand mean of all salaries in the dataset. $\mu_{0,j}$ is the effect of major $j$ on salary or expressed differently, $\mu_{0,j}$ is the difference between the grand mean of salary and the mean for major $j$. $e_{i,j}$ is the student level residual.
+
+Specifying the null model in `lme4`:
+
+```{r}
+nullmodel <- lmer(salary ~ 1 + (1 | major), data = mydata)
+
+```
+
+
+The `1` in the model stands for the intercept. Specifying the `1` for the grand mean isn't strictly necessary as it is included by default, but I have included it for clarity. The difference between this model and the single level regression model you specified earlier is the inclusion of random effects in the formula: `(1 | major)`. This specifies that you want a different intercept for every major in the dataset. We have also left out the predictor `grade` because we are just decomposing the variance in salary for now. 
+
+
+Now let's view our model results.
+
+
+```{r}
+summary(nullmodel)
+
+```
+
+
+```{r, echo = FALSE}
+VPC <-as.data.frame(VarCorr(nullmodel))
+VPC.final <- VPC$vcov[1]/(VPC$vcov[1] + VPC$vcov[2])*100
+
+```
+
+There a few differences from the regression output you will notice. The first is the inclusion of the `Random effects:` section. This section shows you how much variance there was for each of the random terms as well as the residual. Recall that our model only had one random term, the intercept. We can see that the variance in the intercept is `r round(VPC$vcov[1],2)`. Note: that this is not an estimate of $\mu_j$ - each major has a different $\mu_j$. This is an estimate of the variance in the $\mu_j$ term which is expressed as $\sigma^2_u$. **This is an estimate of the variance in salary attributable to unaccounted for between-major differences.**
+
+The second random effect is the residual variance or $\sigma^2_e$. **This is an estimate of the variance in salary attributable to unaccounted for within-major differences.**
+
+The final part of the output is the `Fixed effects:table` which reports the parameter estimate (Estimate) standard error (Std. Error) and t-value (t value), for each parameter in the model. For models with more than one fixed explanatory variable (including the intercept), a correlation table between these variables is also provided underneath the table of parameter estimates.
+
+
+The overall mean income in the dataset is `r round(summary(nullmodel)$coefficients[1],2)`. The mean for a particular major is estimated as this grand mean + some major level residual. We can also calculate what is termed the **variance partition coefficient (VPC)**. The VPC tells us the ratio of variance in income that can be attributed to between-group (in this case between-major) differences. The VPC is equal to `r round(VPC$vcov[1],2)`/`r round((VPC$vcov[1] + VPC$vcov[2]),2)`. This indicates that `r round(VPC.final,2)`% of variation in salary can be attributed to between-major effects. However, it would be very problematic to say that `r round(VPC.final,2)`% of the variance in salary is **causally** related to major effects here, because we have not accounted for other explanations such as selection effects. 
+
+
+We can formally test whether the null model provides a better fit for the data compared to a single level regression model using a **likelihood ratio test**. To do this, we compare a null regression model with our null MLM model using the `anova` command.
+
+
+```{r}
+nullreg <- lm(salary ~ 1, mydata)
+anova(nullmodel, nullreg)
+
+```
+
+
+The likelihood ratio test is based on the chi-squared distribution and indicates which of our models best fits the data. The model with the **lower** AIC/BIC best fits the model better and a significance test is provided. We can see that a MLM provides a significantly better fit for our data than a single level model.
+
+
+## Random Intercept Models 
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/IxAuLKqwEnU" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+Since the variance decomposition suggest that accounting for major-clustering is important, we should probably utilise mulitlevel analysis to explore the relationship between grades and salary. There are at least two ways we can do that - random-intercepts and random-slopes MLM. Random intercepts, is the simplest form of this and basically accounts for the fact that some majors have higher starting salaries **regardless of grade**. Let's take a look at what this would look like on our scatter plot.
+
+```{r, echo=FALSE}
+
+# Random Intercepts
+
+ggplot(data=mydata, aes(x=grade, y=random.intercpet.preds, group = major, colour = major)) +
+  geom_point(aes(x=grade, y = salary, color = major),shape = 16, size = 5, show.legend = FALSE, alpha = 0.4) +
+  geom_line() + 
+  theme_classic() +
+  labs(x="Grade", y="Predicted Salary") +
+  ggtitle("") + 
+  scale_colour_discrete('Department')  + theme(legend.position = "none")+
+  scale_y_continuous(breaks = seq(35000, 90000,5000), labels = paste("$", seq(35, 90,5), "k", sep = "")) +
+  scale_x_continuous(breaks = seq(0,100,10)) 
+
+
+```
+
+You can see that using a random-intercept model, each major has a different intercept (mean) salary. This seems like a sensible theoretical approach to take as we know that not all majors will have the same expected salaries.
+
+Let's now run the corresponding random intercepts model. 
+
+```{r}
+mod1 <- lmer(salary ~ 1 + grade + (1 | major), mydata)
+summary(mod1)
+
+
+```
+
+```{r, echo = FALSE}
+VPC <-as.data.frame(VarCorr(mod1))
+VPC.final <- VPC$vcov[1]/(VPC$vcov[1] + VPC$vcov[2])*100
+
+```
+The slope for the relationship between 'grade' and 'salary' (averaged across majors) is `r round(summary(mod1)$coefficients[2],2)` dollars. This can be interpreted in the same way as an unstandardised coefficient ($b$) in a regression equation - that for each extra grade, salary increased by $`r round(summary(mod1)$coefficients[2],2)` on average.
+
+
+## Random Slopes Models 
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/aCZu14wqAcM" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+Allowing for differences in means within a random-intercept model is probably the most common use of MLM. However, allowing for differences in slopes in where MLM really shines. The random slope model (sticking with 'grade' as the predictor variable) is formulated as:
+
+$$
+salary_{i,j} = \beta_0 + \beta_1{\bf grade} + \mu_{1,j}{\bf grade} + \mu_{0,j} + e_{i,j}
+$$
+
+Let's take a look at what that might look like using our scatter plot.
+
+
+```{r, echo=FALSE}
+mydata$Major <- mydata$major
+ggplot(mydata, aes(grade,salary, color = Major)) +
+  geom_point(shape = 16, size = 5, show.legend = FALSE, alpha = 0.4) +
+  theme_classic() +
+  xlab("Grade") + ylab("Salary") +  geom_smooth(method = "lm", se = FALSE)+
+  scale_y_continuous(breaks = seq(35000, 90000,5000), labels = paste("$", seq(35, 90,5), "k", sep = "")) +
+  scale_x_continuous(breaks = seq(0,100,10)) 
+
+
+
+```
+
+You can see the relationship between grade and salary (the slope) is allowed to differ for majors. Eyeballing the figure you can see that your final grade in sociology, for example, seems much more important than your final grade in statistics.
+
+
+Now, specifying the model in `lme4`:
+```{r}
+ mod2 <- lmer(salary ~ 1 + grade + (1 + grade | major), data = mydata , control = lmerControl(optimizer = "bobyqa"))
+```
+
+
+
+```{r, echo = FALSE}
+VPC <-as.data.frame(VarCorr(mod2))
+VPC.final <- VPC$vcov[1]/(VPC$vcov[1] + VPC$vcov[2])*100
+
+```
+
+The random effects part of the model now looks like `(1 + decade | major)`. This indicates that R should calculate a new intercept (1) **and** a new slope for grade for each *major*.
+
+We will also use the `control` argument to specify the optimisation algorithm used my `lme4` to 'bobyqa'. 'bobyqa' used to be the default optimiser in `lme4` but has been replaced by a new optimiser which is much more likely to provide convergence errors (even when there really isn't an issue) so we'll stick with the original to avoid any scary red errors that don't actually mean much.
+
+Now we can examine the output
+
+```{r, warning=FALSE}
+summary(mod2)
+```
+
+We can see that we now have an estimate of the variation in the intercept as well as the relationship between grade and salary (and the correlation between the two - do differences is mean salaries of a major correlate with difference in the effect of grades on salaries for a major).
+
+For the 'average' major, students salary increasing for each mark their grade goes up by `r round(summary(mod2)$coefficients[2],2)` dollars, but this isn't quite significant. However, for major $j$ we estimate the slope of 'grade' is estimated to be `r round(summary(mod2)$coefficients[2],2)` + $\mu_{1,j}$. The between-major variance in this slopes is estimated as `r round(VPC$vcov[2],2)`.  The variance in the intercept `r round(VPC$vcov[1],2)` is the between-major variance for grade = 0. The correlation between these effects suggests that grades are more important for majors with low average salaries.
+
+We could use a likelihood test to see if the random-slopes model provides a better fit to the data than the random intercepts model.
+
+```{r}
+anova(mod1,mod2)
+
+```
+
+It might be useful to examine the slopes for each major to make sure they correspond with out scatter plot. To do this we use `coef`.
+
+```{r, results=F}
+coef(mod2)$major
+````
+```{r, echo=F}
+knitr::kable(coef(mod2)$major, caption = "Intercepts and slopes for each major", col.names = c("Intercept", "Slope"), digits = 2)
+
+````
+
+We can see that for each extra grade point a statistics student achieves, they earn an extra \$`r round(coef(mod2)$major["statistics","grade"])`, while a sociology student earns \$`r round(coef(mod2)$major["sociology","grade"])` i.e. grades are much more important if you study sociology than statistics. 
+
+
+## Contextual Effects 
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/PHJKeZhYnsA" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+Contextual effects refer to the influence of level-2 variables on the criterion variable (e.g. major-level variables). For example, in our dataset we have a level-2 predictor **entry**. T His is the entry mark for each major. We might predict that this is one of the reasons that some majors have higher average salaries than others - they attract higher ability students.
+      
+Let's take a quick look at the entry mark for each major.
+
+```{r, results = F}
+aggregate(entry ~ major, mydata, mean)
+```
+
+```{r, echo = F}
+knitr::kable(aggregate(entry ~ major, mydata, mean), col.names = c("Major", "Entry"))
+```
+
+
+Contextual variables are included in `lme4` in exactly the same way as level 1 explanatory variables. Let's add in **entry** as a predictor variable, while keeping in the influence of sampling decade. The following model will be estimated
+
+
+$$
+salary_{i,j} = \beta_0 + \beta_1{\bf grade} + \beta_2{\bf entry} + \mu_{1,j}{\bf grade} + \mu_{0,j} + e_{i,j}
+$$
+
+Specifying the model in `lme4`:
+```{r}
+ summary(mod3 <- lmer(salary ~ 1 + grade + entry + (1 + grade | major), data = mydata, control = lmerControl(optimizer = "bobyqa")))
+```
+
+```{r, echo = FALSE}
+VPC <-as.data.frame(VarCorr(mod3))
+VPC.final <- VPC$vcov[1]/(VPC$vcov[1] + VPC$vcov[2])*100
+
+```
+
+On average, for each point higher a student's major's entry mark, they earn \$`r round(summary(mod3)$coefficients[3],2)` more after adjusting for the effect of students' grades. The p-value provided by the `lmerTest` package indicates that this is a statistically significant effect.
+
+
+## Cross-level Interactions 
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/UWovoF6dcfg" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+
+Often what we are really interested in when we perform a multilevel model is the differences in slopes. For example, does the effect of grades on salary depend on how hard a course is to get into?
+
+ The point of these models is to predict whether the grade-slope for each major differs as a function of the major's entry level. This isn't really all that different than a moderation (interaction) in a standard single-level regression.
+
+We will test for an interaction between grade (level 1) and entry (level 2). 
+
+```{r, warning=F}
+ summary(mod3 <- lmer(salary ~  1 + grade*entry + (1 + grade | major), data = mydata, 
+                      control = lmerControl(optimizer = "bobyqa")))
+
+
+```
+
+We can see that the cross-level interaction is not significant, suggesting that the effect of grade does not depend on the entry level of the course. In fact based on this model the only factor that predicts students' starting salaries is the entry mark of their course, not their individual grade.
+
+## Beta values
+
+To get the beta values associated with a MLM we can use the `sjPlot` package.
+
+```{r, warning=F, message=F}
+library(sjPlot)
+tab_model(mod3, show.std = T)
+
+```
+
+
+
+## Advanced MLM
+
+The aim of this session will be twofold. First we will learn about running logistic multi-level models and second we will learn about the MLM approach to growth curve modelling. This session is set-up as a workshop because you will primarily be working with data in R, but the mini-lectures provide some important background information (particularly if you are less familiar with these techniques).
+
+## Logistic Regression
+
+Logistic regression is a technique for modelling binary response data e.g. correct/incorrect. Typically such data is analysed in the social sciences using logistic regression. However, like regression, logistic regression assumes that the observations are independent. When dealing with dependent or clustered binary responses we need to utilised logistic MLM.
+
+
+Logistic regression fits a logarithmic curve rather than a linear curve to the data. Which as you can see below provides a much better model of the data
+
+```{r, echo = F, message=FALSE, warning=F}
+
+mydata <- read.csv("data_Double_2017.csv")
+
+mydata$RT_conf <- ifelse(mydata$Accuracy == 1, mydata$RT_conf + 10, mydata$RT_conf)
+
+ggplot(mydata,aes(RT_conf, Accuracy))+
+  geom_point()+ 
+  geom_smooth(method='lm', formula= y~x) +
+  scale_y_continuous(limits = c(0,1.1)) +
+  stat_smooth(method="glm", se=FALSE, fullrange=TRUE, 
+              method.args = list(family=binomial), color = "darkgreen") +
+  theme_bw() + xlab("RT")
+
+
+
+
+```
+
+The logistic curve (in green) provides a much better fit to the binary data compared to the linear curve (in blue). 
+
+The logistic regression model can be presented as:
+
+$$log(p1−p)=b0+b1x$$
+
+where p is the probability of y occurring given a value x. 
+
+
+
+Let's run a single level logistic regression in R using the `glm` function. The function is very similar to `lm` except  that the distribution family can be specified. This basically allows fitting of different shaped models to the data. While there are different families of models available for modelling binary data we will only use one - a logit model, which is the default in R.
+
+
+First let's open the [data_Double_2017.csv](https://osf.io/hk8ue/download). In this dataset participants have completed an IQ test and provided confidence ratings after each response (e.g. How confident are you that your previous response was correct).
+
+```{r, echo=FALSE, warning=FALSE}
+Variables <- names(mydata)
+Descriptions <- c("Unique ID number for each subject",
+                  "Stimulus",
+                  "Response",
+                  "Confidence",
+                  "The students major",
+                  "Response time for decision",
+                  "Response time for confidence",
+                  "Item Difficulty",
+                  "Response Accuracy")
+
+knitr::kable(cbind(Variables,Descriptions), caption = "Confidence Dataset")
+
+
+
+```
+
+
+To load the data
+
+```{r}
+mydata <- read.csv("data_Double_2017.csv")
+
+```
+
+
+
+## Logistic Regression
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/xNW1QwaRyhU" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+Let's run a single level logistic regression predicting response accuracy as a function of RT and confidence
+```{r}
+
+ fit <- glm(Accuracy ~ RT_dec + Confidence, data = mydata, family = binomial(logit))
+
+summary(fit)
+
+```
+
+We can interpret the estimated coefficients as the effect of confidence and response time on the log-odds or probability of being correct. For example, each extra point of confidence increases the log-odds of accuracy by `r round(fit$coefficients[3],3)` 
+
+
+Note however that we have multiple responses for each subject and this data violates the assumption of independence so we will need to use a MLM to model it.
+
+## Logistic MLM
+
+So far we have only discussed single level logistic regression. A multilevel logistic regression is a similar extension to the model as we have previously seen in MLM. The syntax is extremely similar to the `glm` function.
+
+
+```{r, warning=F, message=F}
+library(lme4)
+library(lmerTest)
+
+fit <- glmer(Accuracy ~ RT_dec + Confidence + (1|Subj_idx), family = binomial("logit"), data = mydata)
+
+```
+
+You can see that applying multilevel modelling to binary data is very similar to continuous response data and shares much the same syntax.
+
+```{r}
+summary(fit)
+```
+
+
+## Growth Curve Models
+
+One of the more interesting applications of MLM techniques is the application to repeated measure data. Often, we collect a large number of repeated measures from people e.g. diary studies, experience sampling, reaction time etc and we would like to model both wining-person and between-person processes. Modelling within-person data is **no different to the earlier models** except now measurement occasions are nested within people (rather than say students nested within schools) and we have some time-based predictor. Obviously there is a large degree of dependency within repeated measure designs. For example, if you were recording your mood in a diary every day, your moods each day are likely to be more similar than of you and another individual. We fit these model in exactly the same way using the `lme4` package.
+
+First, let's load a repeated measures dataset - [help.csv](https://osf.io/4xh7m/download). 
+
+```{r}
+mydata <- read.csv("help.csv")
+```
+
+The dataset contains the following variables
+
+```{r, echo=FALSE, warning=FALSE}
+Variables <- Hmisc::Cs(childID,	auth,	obs,	help)
+Descriptions <- c("Unique ID number for each child",
+       "A categorical between-subjects factor with two levels, 0 and 1, indicating how authoritarian a students primary caregiver is. 0 = low; 1 = high",
+       "Observation coded as 1-10 indicating which observation number a particular measurement comes from",
+       "Indicates a score on a measure of helpful behaviours in the home as measured by an observing research assistant")
+
+knitr::kable(cbind(Variables,Descriptions), caption = "Helpful Behaviours Dataset")
+
+
+
+```
+
+
+
+Research assistants tracked children's helpful behaviours over the course of a year. Researchers went into the home of each child on `r length(unique(mydata$obs))` days over the year. They also classified each parent in the study as high or low on authoritarianism. `r length(unique(mydata$childID))` children participated in the study.
+
+First we can generate a figure to examine the average growth curve in helpful behaviours over the year.
+
+The following code can be used to produce the figure 
+
+```{r}
+library(ggplot2)
+
+
+ggplot(mydata, aes(x = obs, y = help, colour=factor(auth))) +
+               stat_summary(fun.y=mean, geom="line", size=1) +
+               stat_summary(fun.data=mean_se, geom="pointrange", size=1) +
+               theme_bw(base_size=10) +
+               scale_x_continuous(breaks=1:10) + xlab("Observation") +
+  ylab("Helpful Behaviours") + scale_color_manual(name= "Authoritarianism", values=c("#56B4E9", "#E69F00"), labels=c("Low", "High"))
+
+
+
+```
+
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/RIagfhAuN3A" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+
+First we will fit a simple linear growth model. In this model children will be allowed to vary in terms of their average helpful behaviours (intercept) as well as their rate of growth (slope).
+
+```{r}
+summary(mod5 <- lmer(help ~ 1 + obs + (1 + obs | childID), mydata,  control = lmerControl(optimizer = "bobyqa")))
+
+```
+
+```{r, echo = FALSE}
+VPC <-as.data.frame(VarCorr(mod5))
+VPC.final <- VPC$vcov[1]/(VPC$vcov[1] + VPC$vcov[2])*100
+
+```
+
+We can see that there is a significant linear trend in helpful behaviours, with behaviour tending to increase `r round(summary(mod5)$coefficients[2],2)` points each observation, on average. We can calculate a VPC to examine what proportion of variance occurs within-child relative to between-child. The $VPC_\mu$ is `r round(VPC$vcov[1],2)`/`r round((VPC$vcov[1] + VPC$vcov[2]),2)` Suggesting that `r round(VPC.final,2)`% of variation in helpful behaviours occurs between children and `r 100 - round(VPC.final,2)`% of the variance occurs within a child
+
+To examine whether the linear growth trend differs as a function of parent authoritarianism we include it as an interaction in the model.
+
+```{r}
+summary(mod6 <- lmer(help ~ 1 + obs*auth + (1 + obs | childID), mydata,  control = lmerControl(optimizer = "bobyqa")))
+```
+
+Based on these results it appear that the linear growth trajectory in helpful behaviours does not differ as a function of parental authoritarianism. We can see that the between-person variance has decreased because of the inclusion of the auth variable.
+
+However we might also want to test whether there is a curvlinnear trend in the growth trajectories. We can test this by including higher order polynomials in the model. In R you can calculate orthogonal polynomials using the `poly` function.
+
+<div align="center">
+   <iframe width="560" height="315" src="http://www.youtube.com/embed/b8x1DFVYoV0" frameborder="0" allowfullscreen>
+   </iframe>
+</div>
+
+
+
+```{r}
+t <- poly(unique(mydata$obs), 2)
+mydata[,paste("poly", 1:2, sep="")] <- t[mydata$obs, 1:2] # save the polynomials and puts poly in front
+
+```
+
+You can then include both the main effects of each polynomial and the interaction with authoritarianism.
+```{r}
+
+summary(mod6 <- lmer(help ~ 1 + poly1*auth + poly2*auth + (1 + poly1 + poly2  | childID), mydata,  control = lmerControl(optimizer = "bobyqa")))
+
+```
+
+The significant interaction between the quadratic polynomial and authoritarianism suggests that the children of high authoritarianism caregivers develop helpful behaviours at a different rate to the children of low authoritarianism caregivers.
+
+However, we have a convergence issue - this is probably caused by our model being too complex or the fact that the random slopes for poly1 and poly2 are very highly correlated.
+
+
+## Convergence Issues
+
+The last model we rand didn't converge. This could be a sign of a misspecified model or may indicate that the model is too complex for your data. The sample size (at any level) may also be limiting the extent to which you can get a final model. **You shouldn't interpret a model that doesn't converge**
+
+Some things you can try to get your model to converge:
+
+1. try different optimisers
+2. scale your variables
+3. simplify your model
